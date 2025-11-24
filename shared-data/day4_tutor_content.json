@@ -1,0 +1,32 @@
+[
+  {
+    "id": "variables",
+    "title": "Variables",
+    "summary": "Variables are containers that store values in programming. Think of them as labeled boxes where you can put different types of data like numbers, text, or other information. You give each variable a name and assign it a value. This lets you reuse that value throughout your code without typing it again. For example, if you store a user's name in a variable, you can use that variable whenever you need to refer to that person.",
+    "sample_question": "What is a variable and why is it useful in programming?"
+  },
+  {
+    "id": "loops",
+    "title": "Loops",
+    "summary": "Loops are programming structures that let you repeat actions multiple times without writing the same code over and over. There are two main types: for loops and while loops. A for loop repeats a specific number of times, like counting from 1 to 10. A while loop keeps repeating as long as a condition is true, like asking for user input until they enter a valid answer. Loops save time and make code more efficient.",
+    "sample_question": "Explain the difference between a for loop and a while loop."
+  },
+  {
+    "id": "functions",
+    "title": "Functions",
+    "summary": "Functions are reusable blocks of code that perform a specific task. You define a function once with a name and parameters, then call it whenever you need that task done. Functions help organize code, make it easier to read, and avoid repetition. They can take inputs called parameters and return outputs. For example, a function might take two numbers as input and return their sum.",
+    "sample_question": "What is a function and how does it help organize code?"
+  },
+  {
+    "id": "conditionals",
+    "title": "Conditional Statements",
+    "summary": "Conditional statements let your program make decisions based on conditions. The most common is the if-else statement. If a condition is true, one block of code runs; if false, another block runs. You can also chain multiple conditions with else-if. This allows programs to respond differently to different situations, like showing an error message if a user enters invalid data.",
+    "sample_question": "How do if-else statements help programs make decisions?"
+  },
+  {
+    "id": "arrays",
+    "title": "Arrays and Lists",
+    "summary": "Arrays or lists are data structures that store multiple values in a single variable. Instead of creating separate variables for each item, you can group related items together. Each item has an index or position number, usually starting from 0. You can add, remove, or access items by their index. Arrays are perfect for storing collections like a list of names, scores, or products.",
+    "sample_question": "What is an array and when would you use one?"
+  }
+]

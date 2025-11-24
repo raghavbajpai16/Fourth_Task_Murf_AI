@@ -1,8 +1,9 @@
 import logging
 import json
-import os
+import random
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -19,124 +20,141 @@ from livekit.agents import (
     function_tool,
     RunContext
 )
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
+from livekit.plugins import silero, groq, deepgram, noise_cancellation, murf
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-# Path to wellness log file
-WELLNESS_LOG_PATH = Path(__file__).parent.parent / "wellness_log.json"
+# Load tutor content
+CONTENT_FILE = Path(__file__).parent.parent.parent / "shared-data" / "day4_tutor_content.json"
+tutor_content = []
+if CONTENT_FILE.exists():
+    with open(CONTENT_FILE, "r") as f:
+        tutor_content = json.load(f)
+        logger.info(f"Loaded {len(tutor_content)} concepts from {CONTENT_FILE}")
+else:
+    logger.warning(f"Content file not found: {CONTENT_FILE}")
+
+# Session state
+current_mode = None  # 'learn', 'quiz', or 'teach_back'
+current_concept = None
+current_room = None
 
 
-# Helper functions for JSON persistence
-def load_wellness_log():
-    """Load wellness log from JSON file."""
-    if WELLNESS_LOG_PATH.exists():
-        try:
-            with open(WELLNESS_LOG_PATH, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            logger.warning("Invalid JSON in wellness log, starting fresh")
-            return {"check_ins": []}
-    return {"check_ins": []}
-
-
-def save_wellness_log(data):
-    """Save wellness log to JSON file."""
-    with open(WELLNESS_LOG_PATH, 'w') as f:
-        json.dump(data, f, indent=2)
-
-
-class Assistant(Agent):
+# Greeter Agent - Initial agent that routes to learning modes
+class GreeterAgent(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a supportive health and wellness voice companion. The user is interacting with you via voice.
+            instructions="""You are a friendly programming tutor. Your job is to help students learn programming concepts through three different modes.
             
-            Your role is to:
-            1. Conduct friendly, supportive daily check-ins about mood, energy, and wellness
-            2. Ask about their intentions and objectives for the day (1-3 simple goals)
-            3. Offer realistic, grounded, and actionable advice - keep it simple and practical
-            4. Avoid any medical diagnosis or clinical claims - you are a supportive companion, not a clinician
-            5. Close each check-in with a brief recap of mood and objectives, and ask for confirmation
+            **IMPORTANT: When you first connect, immediately greet the user warmly and introduce yourself.**
             
-            Your conversation style:
-            - Warm, empathetic, and non-judgmental
-            - Concise and to the point - keep responses short
-            - No complex formatting, emojis, or special symbols
-            - Encourage small, achievable steps rather than overwhelming goals
+            Start with: "Hello! Welcome to your Active Recall Coach! I'm Matthew, and I'm here to help you master programming concepts through active learning."
             
-            When starting a conversation, check if there are previous check-ins using the get_previous_checkins tool.
-            If there are previous entries, reference them naturally (e.g., "Last time we talked, you mentioned being low on energy. How does today compare?").
+            Then explain the three modes:
+            1. LEARN mode - You explain programming concepts with examples and analogies (Voice: Matthew)
+            2. QUIZ mode - You ask questions to test their knowledge (Voice: Alicia)
+            3. TEACH BACK mode - They explain concepts to you and you give feedback (Voice: Ken)
             
-            After the check-in conversation, use the save_wellness_checkin tool to persist the data.
-            """,
+            Available concepts:
+            - Variables: Containers that store values
+            - Loops: Repeat actions multiple times (for loops, while loops)
+            - Functions: Reusable blocks of code
+            - Conditional Statements: Make decisions (if/else)
+            - Arrays and Lists: Collections of multiple values
+            
+            After introducing the modes, ask: "Which mode would you like to start with today?"
+            
+            When they choose a mode, use the switch_mode tool.
+            
+            Keep responses friendly, encouraging, and concise.""",
         )
-
-    @function_tool
-    async def get_previous_checkins(self, context: RunContext, limit: int = 3):
-        """Retrieve previous wellness check-ins to reference past conversations.
-        
-        Use this tool at the start of a conversation to personalize the check-in based on previous sessions.
-        
-        Args:
-            limit: Maximum number of previous check-ins to retrieve (default: 3)
-        """
-        logger.info(f"Retrieving last {limit} check-ins")
-        
-        data = load_wellness_log()
-        check_ins = data.get("check_ins", [])
-        
-        if not check_ins:
-            return "No previous check-ins found. This appears to be the first session."
-        
-        # Get the most recent check-ins
-        recent = check_ins[-limit:]
-        recent.reverse()  # Most recent first
-        
-        summary = f"Found {len(recent)} previous check-in(s):\n"
-        for i, entry in enumerate(recent, 1):
-            summary += f"\n{i}. Date: {entry.get('date')}\n"
-            summary += f"   Mood: {entry.get('mood', 'N/A')}\n"
-            summary += f"   Objectives: {', '.join(entry.get('objectives', []))}\n"
-            if entry.get('summary'):
-                summary += f"   Summary: {entry.get('summary')}\n"
-        
-        return summary
     
     @function_tool
-    async def save_wellness_checkin(self, context: RunContext, mood: str, objectives: list[str], summary: str = ""):
-        """Save the current wellness check-in data to persistent storage.
-        
-        Call this tool after completing a check-in conversation with the user.
+    async def switch_mode(self, context: RunContext, mode: Annotated[str, "The learning mode: 'learn', 'quiz', or 'teach_back'"]):
+        """Switch to a specific learning mode and change the voice persona.
         
         Args:
-            mood: User's self-reported mood or energy level (text description)
-            objectives: List of 1-3 intentions or goals the user stated for the day
-            summary: Optional brief summary sentence of the check-in
+            mode: The learning mode to switch to ('learn', 'quiz', or 'teach_back')
         """
-        logger.info(f"Saving check-in: mood={mood}, objectives={objectives}")
+        global current_mode
         
-        data = load_wellness_log()
+        # Normalize the mode input - handle spaces, underscores, and case variations
+        mode = mode.lower().strip().replace(" ", "_").replace("-", "_")
         
-        # Create new check-in entry
-        entry = {
-            "date": datetime.now().isoformat(),
-            "mood": mood,
-            "objectives": objectives,
-        }
+        # Also handle common variations
+        if mode in ['teachback', 'teach']:
+            mode = 'teach_back'
         
-        if summary:
-            entry["summary"] = summary
+        if mode not in ['learn', 'quiz', 'teach_back']:
+            return f"Sorry, '{mode}' is not a valid mode. Please choose 'learn', 'quiz', or 'teach back'."
         
-        # Add to check-ins list
-        data["check_ins"].append(entry)
+        current_mode = mode
+        logger.info(f"✓ Switching to mode: {mode}")
         
-        # Save to file
-        save_wellness_log(data)
+        # Note: Murf TTS voice is set at session start and cannot be changed dynamically
+        # We use text-based personas instead to differentiate modes
         
-        return f"Check-in saved successfully! Recorded mood: {mood}, and {len(objectives)} objective(s)."
+        # Return confirmation message with personalized greeting
+        if mode == 'learn':
+            return """Hello! I'm Matthew, your learning guide. I'm so glad you chose Learn mode! 
+                
+I'll be explaining programming concepts in a clear, friendly way with lots of examples. Think of me as your patient teacher who's here to make complex ideas simple.
+
+We can explore these topics together:
+• Variables - storing and managing data
+• Loops - repeating actions efficiently  
+• Functions - creating reusable code blocks
+• Conditionals - making smart decisions in code
+• Arrays - organizing collections of data
+
+What would you like to learn about first?"""
+        elif mode == 'quiz':
+            return """Hey there! I'm Alicia, and I'm excited to be your quiz master! 
+                
+Quiz mode is all about testing what you know and helping you discover what you've mastered. Don't worry - I'll be encouraging and supportive throughout!
+
+I can quiz you on:
+• Variables
+• Loops
+• Functions  
+• Conditionals
+• Arrays
+
+Which topic would you like to be quizzed on? Let's see what you know!"""
+        else:  # teach_back
+            return """Hi! I'm Ken, your learning coach. Welcome to Teach Back mode!
+                
+This is where YOU become the teacher! Explaining concepts in your own words is one of the best ways to truly understand them. I'll listen carefully and give you helpful feedback.
+
+You can teach me about:
+• Variables
+• Loops
+• Functions
+• Conditionals  
+• Arrays
+
+Which concept would you like to explain to me? Take your time and teach me like I'm learning it for the first time!"""
+    
+    @function_tool
+    async def get_concept(self, context: RunContext, concept_id: Annotated[str, "The concept ID: 'variables', 'loops', 'functions', 'conditionals', or 'arrays'"]):
+        """Get information about a programming concept.
+        
+        Args:
+            concept_id: The ID of the concept to retrieve
+        """
+        global current_concept
+        
+        concept = next((c for c in tutor_content if c['id'] == concept_id.lower()), None)
+        if not concept:
+            return f"I don't have information about '{concept_id}'. Available concepts are: variables, loops, functions, conditionals, and arrays."
+        
+        current_concept = concept
+        logger.info(f"Retrieved concept: {concept['title']}")
+        
+        return f"Concept: {concept['title']}\n\nSummary: {concept['summary']}\n\nSample Question: {concept['sample_question']}"
 
 
 def prewarm(proc: JobProcess):
@@ -144,57 +162,58 @@ def prewarm(proc: JobProcess):
 
 
 async def entrypoint(ctx: JobContext):
+    global current_room, current_mode, current_concept
+    current_room = ctx.room
+    
+    # Reset session state when starting
+    current_mode = None
+    current_concept = None
+    
     # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
+    
+    logger.info(f"Received job for room: {ctx.room.name}")
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    # Create AgentSession with Ryan voice as default (greeter)
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-2"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=google.LLM(
-                model="gemini-2.5-flash",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+        stt=deepgram.STT(
+            model="nova-2",
+            language="en-US",
+            smart_format=True,
+            interim_results=True,
+        ),
+        llm=groq.LLM(
+            model="llama-3.3-70b-versatile",  # Fast and free
+            temperature=0.7,
+        ),
         tts=murf.TTS(
-                voice="en-US-matthew", 
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="en-US-matthew",  # Matthew - default greeter voice (Day 4 spec)
+            style="Conversational",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=1),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        preemptive_generation=True,
+        preemptive_generation=False,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
+    # Metrics collection
     usage_collector = metrics.UsageCollector()
 
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
         usage_collector.collect(ev.metrics)
+    
+    @session.on("agent_speech_committed")
+    def _on_agent_speech(text: str):
+        logger.info(f"Agent speaking: {text[:100]}...")
+    
+    @session.on("user_speech_committed") 
+    def _on_user_speech(text: str):
+        logger.info(f"User said: {text}")
 
     async def log_usage():
         summary = usage_collector.get_summary()
@@ -202,22 +221,15 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(log_usage)
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
-
-    # Start the session, which initializes the voice pipeline and warms up the models
+    # Start the session with Greeter agent
+    greeter = GreeterAgent()
+    
     await session.start(
-        agent=Assistant(),
+        agent=greeter,
         room=ctx.room,
-        # Disable noise cancellation for local development (requires LiveKit Cloud)
-        # room_input_options=RoomInputOptions(
-        #     noise_cancellation=noise_cancellation.BVC(),
-        # ),
+        room_input_options=RoomInputOptions(
+            noise_cancellation=noise_cancellation.BVC(),
+        ),
     )
 
     # Join the room and connect to the user

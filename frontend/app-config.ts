@@ -20,20 +20,20 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'LiveKit',
-  pageTitle: 'LiveKit Voice Agent',
-  pageDescription: 'A voice agent built with LiveKit',
+  companyName: 'Teach-the-Tutor',
+  pageTitle: 'Active Recall Coach',
+  pageDescription: 'Learn, Quiz, and Teach Back with your AI Tutor',
 
   supportsChatInput: true,
-  supportsVideoInput: true,
-  supportsScreenShare: true,
+  supportsVideoInput: false,
+  supportsScreenShare: false,
   isPreConnectBufferEnabled: true,
 
   logo: '/lk-logo.svg',
-  accent: '#002cf2',
+  accent: '#6366f1', // Indigo-500
   logoDark: '/lk-logo-dark.svg',
-  accentDark: '#1fd5f9',
-  startButtonText: 'Start call',
+  accentDark: '#818cf8', // Indigo-400
+  startButtonText: 'Start Learning Session',
 
   // for LiveKit Cloud Sandbox
   sandboxId: undefined,
